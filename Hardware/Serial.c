@@ -1,7 +1,35 @@
+/**
+  * 文    件：Serial.c
+  * 功    能：USART1 串口驱动 + RS485 收发方向控制
+  * 说    明：RS485 是半双工，同一时刻只能收或只能发，发完必须切回接收，
+  *           否则主机的下一帧收不到。方向由 PB14 / PB15 两个脚控制（见 ModeO / ModeI）。
+  *           接收采用"中断逐字节收 + 定时器判帧尾"的方式，缓冲区是 Serial_RxData。
+  *
+  * 对外接口：
+  *   Serial_Init                串口初始化：PA9 复用推挽输出、PA10 上拉输入、PB14/PB15 方向脚
+  *   Serial_SendByte            发送一个字节，等待发送完成
+  *   Serial_SendArray           发送一个数组，按字节依次发出
+  *   Serial_SendString          发送一个以 '\0' 结尾的字符串
+  *   Serial_SendNumber          发送一个十进制数字，可指定显示位数
+  *   Serial_Printf              格式化打印，用法同 printf
+  *   ModeO                      切换为发送模式（PB14 / PB15 拉高，驱动器使能）
+  *   ModeI                      切换为接收模式（PB14 / PB15 拉低，接收器使能）
+  *   Serial_GetRxFlag           查询并清除"一帧收完"标志，主循环用它判断该不该处理
+  *   Serial_ClearRx             清空接收状态，丢弃半截帧（收发的方向切换后调用）
+  *
+  * 内部辅助函数：
+  *   Serial_Pow                 整数次方，供 Serial_SendNumber 拆位使用
+  *   fputc                      printf 的底层重定向函数，由 C 库调用
+  *
+  * 中断服务函数：
+  *   USART1_IRQHandler          串口接收中断，每收到一字节存入缓冲区并把帧尾计时清零
+  */
 #include "stm32f10x.h"                  // Device header
 #include <stdio.h>
 #include <stdarg.h>
+#include "Serial.h"
 #include "Timer.h"
+#include "Modbus.h"
 
 
 /**
@@ -188,8 +216,38 @@ uint8_t Serial_GetRxFlag(void)
 	}
 }
 
-uint8_t Serial_RxData[9];	//定义串口接收的数据数组
-uint8_t RNum = 0,Count,TmFlag;		//定义串口接收的数据数组的索引变量
+/**
+  * 函    数：清空接收状态，丢弃当前正在接收的半截帧
+  * 参    数：无
+  * 返 回 值：无
+  * 注意事项：先读 SR 再读 DR 是 STM32 手册给出的标准清标志序列，
+  *           一次能把 RXNE / ORE / NE / FE / PE 全部清掉。
+  *           不能用 USART_ClearFlag 代替：该函数在 SPL 里只能传 CTS / LBD / TC / RXNE，
+  *           传 ORE 会触发 assert_param 失败。
+  *           485 收发方向切换的瞬间总线上常有毛刺，不清的话下一次接收
+  *           可能立刻误触发一次 RXNE，把噪声当成帧头
+  */
+void Serial_ClearRx(void)
+{
+	volatile uint16_t tmp;
+
+	tmp = USART1->SR;		//读 SR，锁存标志
+	tmp = USART1->DR;		//再读 DR，把上面几个标志一并清掉
+	(void)tmp;				//tmp 只用于产生这两次读操作，读完就没用了
+
+	RNum   = 0;				//丢弃半截帧，重新开始收
+	TmFlag = 0;
+	Count  = 0;
+}
+
+uint8_t Serial_RxData[MODBUS_BUF_SIZE];		//定义串口接收的数据数组
+
+/* RNum 必须是 16 位：Modbus RTU 单帧最长 256 字节，8 位变量最多表示到 255，
+   既存不下"已收满 256 字节"这个状态，下面 RNum < MODBUS_BUF_SIZE 的守卫也会恒为真，
+   索引到 255 后直接回绕到 0，把帧头覆盖掉 */
+volatile uint16_t RNum = 0;					//接收索引
+volatile uint8_t Count = 0;					//帧尾静默计时，单位 ms
+volatile uint8_t TmFlag = 0;				//本帧已收到过字节的标志位
 
 /**
   * 函    数：USART1中断函数
@@ -203,16 +261,17 @@ void USART1_IRQHandler(void)
 {
 	if (USART_GetITStatus(USART1, USART_IT_RXNE) == SET)		//判断是否是USART1的接收事件触发的中断
 	{
-		TmFlag=1;
-		if(RNum<9)
+		TmFlag = 1;						//收到字节了，帧尾计时从此开始有意义
+
+		if (RNum < MODBUS_BUF_SIZE)		//缓冲区没满才存
 		{
-		Serial_RxData[RNum++] = USART_ReceiveData(USART1);				//读取数据寄存器，存放在接收的数据变量
+			Serial_RxData[RNum ++] = USART_ReceiveData(USART1);		//读取数据寄存器，存放在接收的数据变量
 		}
 		else
 		{
-		USART_ReceiveData(USART1);	
+			USART_ReceiveData(USART1);	//缓冲区满了，读走丢弃，避免触发溢出，但不停止接收
 		}
-		
-		Count=0;										
+
+		Count = 0;						//每收到一个字节，帧尾静默计时就清零重来
 	}
 }

@@ -21,6 +21,25 @@
   ******************************************************************************
   */
 
+/**
+  * 文    件：stm32f10x_it.c
+  * 功    能：Cortex-M3 内核异常处理函数
+  * 说    明：本文件来自 ST 官方模板，里面除了几个死循环外都是空实现，
+  *           本工程没有用到。串口和定时器的中断函数不在这里，
+  *           分别在 Serial.c（USART1_IRQHandler）和 Timer.c（TIM2_IRQHandler）。
+  *
+  * 本文件中的函数（按启动文件里的向量表顺序）：
+  *   NMI_Handler                不可屏蔽中断，空实现
+  *   HardFault_Handler          硬件错误，死循环（程序跑飞多半停在这里）
+  *   MemManage_Handler          存储器管理错误，死循环
+  *   BusFault_Handler           总线错误，死循环
+  *   UsageFault_Handler         用法错误，死循环
+  *   SVC_Handler                系统服务调用，空实现
+  *   DebugMon_Handler           调试监控，空实现
+  *   PendSV_Handler             可挂起系统服务，空实现
+  *   SysTick_Handler            系统滴答定时器，空实现
+  */
+
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f10x_it.h"
 

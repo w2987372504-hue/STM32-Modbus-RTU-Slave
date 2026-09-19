@@ -1,3 +1,30 @@
+/**
+  * 文    件：OLED.c
+  * 功    能：0.96 寸 OLED 显示屏驱动（软件 I2C，PB8=SCL、PB9=SDA）
+  * 说    明：底层是软件模拟 I2C 时序，逐位翻转两个 GPIO，所以刷新一屏比较慢（毫秒级）。
+  *           一般只在数据变化后刷新，不要放在高频循环里。
+  *           显示坐标是"行 1~4、列 1~16"，每个字符占 1 列、8x16 像素。
+  *
+  * 对外接口：
+  *   OLED_Init                  初始化 OLED：初始化 I2C 引脚、关闭显示、清屏、开显示
+  *   OLED_Clear                 清屏，把整屏 8 页全部写 0
+  *   OLED_ShowChar              在指定行列显示一个 ASCII 字符
+  *   OLED_ShowString            在指定位置开始显示一个字符串
+  *   OLED_ShowNum               显示无符号十进制数字，可指定显示位数
+  *   OLED_ShowSignedNum         显示带符号十进制数字，符号额外占 1 列
+  *   OLED_ShowHexNum            显示十六进制数字，可指定显示位数
+  *   OLED_ShowBinNum            显示二进制数字，可指定显示位数
+  *
+  * 内部函数（未在 OLED.h 中导出，仅供本文件使用）：
+  *   OLED_I2C_Init              初始化软件 I2C 用的两个 GPIO（开漏输出）
+  *   OLED_I2C_Start             产生 I2C 起始条件
+  *   OLED_I2C_Stop              产生 I2C 停止条件
+  *   OLED_I2C_SendByte          通过软件 I2C 发送一个字节，不处理应答位
+  *   OLED_WriteCommand          向 OLED 写一条命令（从机地址 0x78，控制字节 0x00）
+  *   OLED_WriteData             向 OLED 写一个数据（从机地址 0x78，控制字节 0x40）
+  *   OLED_SetCursor             设置显存写入位置（页地址 Y、列地址 X）
+  *   OLED_Pow                   整数次方，供上面几个显示函数拆位使用
+  */
 #include "stm32f10x.h"
 #include "OLED_Font.h"
 

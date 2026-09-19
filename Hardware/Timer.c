@@ -1,5 +1,21 @@
+/**
+  * 文    件：Timer.c
+  * 功    能：TIM2 定时中断，用于判定 Modbus RTU 的帧尾
+  * 说    明：TIM2 配置成每 1ms 中断一次。Modbus RTU 没有帧头帧尾字节，
+  *           靠总线上 3.5 个字符时间的静默来划分帧边界，所以串口每收到一个字节，
+  *           本文件里的 Count 就清零，连续 MODBUS_T35_MS 毫秒没有新字节就认为一帧收完了。
+  *           帧收完后置 RxFlag=1，并同时把帧长存进 RxLen、索引 RNum 清零，供主循环取用。
+  *
+  * 对外接口：
+  *   Timer_Init                 定时器初始化：TIM2 配置为 1ms 周期中断并开 NVIC
+  *
+  * 中断服务函数：
+  *   TIM2_IRQHandler            定时器更新中断，帧尾静默计时到点则判定一帧接收完成
+  */
 #include "stm32f10x.h"                  // Device header
 #include "Serial.h"
+#include "Timer.h"
+#include "Modbus.h"
 /**
   * 函    数：定时中断初始化
   * 参    数：无
@@ -49,38 +65,37 @@ void Timer_Init(void)
 	TIM_Cmd(TIM2, ENABLE);			//使能TIM2，定时器开始运行
 }
 
-uint8_t RxFlag = 0;	//定义接收标志位变量
-uint8_t RxLen = 0;		//定义接收数据长度变量
-uint8_t TxFlag = 0;	//定义定时器标志位变量
+volatile uint8_t  RxFlag = 0;	//定义接收标志位变量
+volatile uint16_t RxLen  = 0;	//定义接收数据长度变量（最长 256，必须 16 位）
+
 /**
   * 函    数：定时器中断函数，可以复制到使用它的地方
   * 参    数：无
   * 返 回 值：无
+  * 注意事项：本中断只负责一件事——用空闲时间判定 Modbus RTU 的帧尾。
+  *           RTU 模式没有帧头帧尾字节，全靠总线上 3.5 个字符时间的静默来划分帧边界，
+  *           所以每收到一个字节（串口中断里 Count 清零）就开始重新计时，
+  *           连续 MODBUS_T35_MS 毫秒没有新字节，就认为这一帧收完了
   */
 void TIM2_IRQHandler(void)
 {
 	if (TIM_GetITStatus(TIM2, TIM_IT_Update) == SET)
 	{
 		TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
-		static uint16_t i;
-		i++;
-		if(i>=2000)
+
+		if (TmFlag == 1)		//收到过字节，帧尾计时才有意义；线路一直空闲时 TmFlag 为 0，不会误判
 		{
-			i=0;
-			TxFlag=1;	//在此处添加定时器中断处理代码
-		}
-		if(TmFlag==1)
-		{
-			Count++;
-		if (Count >= 5)
-		{
-			Count = 0;
-			RxLen = RNum;   // 把本帧长度存下来
-			RNum = 0;       // 立刻为下一帧腾出缓冲区
-			RxFlag = 1;		//在此处添加定时器中断处理代码
-			TmFlag=0;
-		}
-		
+			Count ++;
+
+			if (Count >= MODBUS_T35_MS)
+			{
+				Count  = 0;
+				TmFlag = 0;		//本帧结束，等下一个字节重新开始计时
+
+				RxLen  = RNum;	//先把帧长存下来，
+				RNum   = 0;		//再清索引，为下一帧腾出缓冲区
+				RxFlag = 1;		//通知主循环：一帧收完了
+			}
 		}
 	}
 }
