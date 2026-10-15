@@ -8,3 +8,19 @@ DebugConfig/
 *.bak
 *.dep
 *.build_log.htm
+
+# ---- Keil 自己会重新生成的文件 ----
+EventRecorderStub.scvd
+RTE/
+
+# ---- 后缀兜底：万一输出目录改了名字，产物也能被挡住 ----
+*.o
+*.d
+*.crf
+*.axf
+*.lnp
+*.sct
+*.hex
+*.map
+*.lst
+*.htm
